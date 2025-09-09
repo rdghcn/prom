@@ -1,0 +1,132 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nvidia-dcgm-exporter
+  namespace: monitoring
+  labels:
+    app: nvidia-dcgm-exporter
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    verbs:
+      - use
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+---
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nvidia-dcgm-exporter
+  namespace: monitoring
+  labels:
+    app: nvidia-dcgm-exporter
+---
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nvidia-dcgm-exporter
+  namespace: monitoring
+  labels:
+    app: nvidia-dcgm-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nvidia-dcgm-exporter
+subjects:
+  - kind: ServiceAccount
+    name: nvidia-dcgm-exporter
+    namespace: monitoring
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    app: nvidia-gpu-exporter
+  name: nvidia-gpu-exporter
+  namespace: monitoring
+  annotations:
+    openshift.io/scc: nvidia-gpu-exporter
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-gpu-exporter
+  template:
+    metadata:
+      labels:
+        app: nvidia-gpu-exporter
+    spec:
+      nodeSelector:
+        gpu: "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      serviceAccountName: nvidia-dcgm-exporter
+      containers:
+        - image: crpi-w4le1oy1gd4wy3vu.cn-hangzhou.personal.cr.aliyuncs.com/infrawaves-aicloud/dcgm:v1.1.1
+          name: nvidia-dcgm-exporter
+          ports:
+            - name: "metrics"
+              containerPort: 9400
+          args:
+            - "--collectors"
+            - "/etc/dcgm-exporter/dcp-metrics-included.csv"
+          env:
+            - name: DCGM_EXPORTER_LISTEN
+              value: ":9400"
+            - name: "DCGM_EXPORTER_KUBERNETES"               # 支持Kubernetes指标映射到Pod
+              value: "true"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+          resources:
+            limits:
+              cpu: 500m
+              memory: 1Gi
+            requests:
+              cpu: 250m
+              memory: 100Mi
+          volumeMounts:
+            - name: "pod-gpu-resources"
+              readOnly: true
+              mountPath: "/var/lib/kubelet/pod-resources"
+            - mountPath: /etc/dcgm-exporter/dcp-metrics-included.csv
+              name: metrics-config
+              subPath: dcgm-metrics-config.txt  # 指定文件路径
+              readOnly: true
+          securityContext:
+            privileged: true
+      volumes:
+        - name: "pod-gpu-resources"
+          hostPath:
+            path: "/var/lib/kubelet/pod-resources"
+        - name: metrics-config
+          configMap:
+            name: dcgm-metrics-config  # 引用 ConfigMap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nvidia-gpu-exporter
+  namespace: monitoring
+spec:
+  ports:
+    - port: 9400
+      targetPort: 9400
+  selector:
+    app: nvidia-gpu-exporter

@@ -1,0 +1,788 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alert-rules
+  namespace: volcano-monitoring
+  annotations:
+    meta.helm.sh/release-name: volcano
+    meta.helm.sh/release-namespace: volcano-system
+  labels:
+    app.kubernetes.io/managed-by: Helm
+data:
+  alert.rules: |-
+    groups:
+
+    # ==================== 基础服务监控 ====================
+
+    - name: basic-service-alerts
+      rules:
+      # 服务可用性监控
+      - alert: ServiceDown
+        expr: up == 0
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "BASIC_ENV"
+          id: "HARD_0108"
+        annotations:
+          summary: "服务不可用"
+          description: "服务 {{ $labels.job }} 在过去 30 秒内不可用，当前值: {{ $value }}，影响实例: {{ $labels.instance }}。请检查服务是否正常运行或网络连接是否正常。"
+          ip: "{{ $labels.instance }}"
+
+      # CPU 使用率监控
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[30s]) > 0.9
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "HARD_0103"
+        annotations:
+          summary: "服务 CPU 使用率过高"
+          description: "服务 {{ $labels.job }} 的 CPU 使用率在过去 30 秒内超过了 90%，当前值: {{ $value }}，影响实例: {{ $labels.instance }}。请检查服务的负载情况或者资源分配是否合理。"
+          ip: "{{ $labels.instance }}"
+
+    # ==================== mysql 监控 ====================
+    - name: mysql-alerts
+      rules:
+      - alert: MySQLTooManyConnections
+        expr: mysql_global_status_threads_connected / mysql_global_variables_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: P2
+          alert_type: "DATABASE_PERFORMANCE"
+          id: "MYSQL_0002"
+        annotations:
+          summary: "MySQL 连接数接近上限"
+          description: "MySQL 实例 {{ $labels.instance }} 当前连接数 {{ $value | humanizePercentage }} 接近最大连接数限制"
+          ip: "{{ $labels.instance }}"
+
+      - alert: MySQLSlowQueriesHigh
+        expr: rate(mysql_global_status_slow_queries[5m]) > 10
+        for: 3m
+        labels:
+          severity: P2
+          alert_type: "DATABASE_PERFORMANCE"
+          id: "MYSQL_0003"
+        annotations:
+          summary: "MySQL 慢查询数量激增"
+          description: "MySQL 实例 {{ $labels.instance }} 慢查询速率过高，当前速率: {{ $value | humanize }} 次/秒"
+          ip: "{{ $labels.instance }}"
+
+      - alert: MySQLInnoDBBufferPoolHitRateLow
+        expr: (1 - (mysql_global_status_innodb_buffer_pool_reads / mysql_global_status_innodb_buffer_pool_read_requests)) < 0.95
+        for: 10m
+        labels:
+          severity: P2
+          alert_type: "DATABASE_PERFORMANCE"
+          id: "MYSQL_0004"
+        annotations:
+          summary: "MySQL InnoDB 缓冲池命中率过低"
+          description: "MySQL 实例 {{ $labels.instance }} InnoDB 缓冲池命中率仅 {{ $value | humanizePercentage }}，低于95%阈值"
+          ip: "{{ $labels.instance }}"
+
+      - alert: MySQLAbortedConnectionsHigh
+        expr: rate(mysql_global_status_aborted_connects[5m]) > 5
+        for: 5m
+        labels:
+          severity: P2
+          alert_type: "DATABASE_CONNECTION"
+          id: "MYSQL_0005"
+        annotations:
+          summary: "MySQL 异常连接数过高"
+          description: "MySQL 实例 {{ $labels.instance }} 异常连接速率过高，当前速率: {{ $value | humanize }} 次/秒"
+          ip: "{{ $labels.instance }}"
+
+    # ==================== Etcd 监控 ====================
+
+    - name: etcd-alerts
+      rules:
+      # Etcd Leader 监控
+      - alert: EtcdLeaderMissing
+        expr: etcd_server_has_leader == 0
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "K8S_SERVICE"
+          id: "K8S_0109"
+        annotations:
+          summary: "Etcd Leader 丢失"
+          description: "Etcd 集群检测到没有 Leader，请立即排查问题。"
+          ip: "{{ $labels.pod_host_ip }}"
+
+      # Etcd 写延迟监控
+      - alert: EtcdHighWriteLatency
+        expr: histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "K8S_SERVICE"
+          id: "K8S_0110"
+        annotations:
+          summary: "Etcd 写操作延迟过高"
+          description: "Etcd 写操作的 99% 延迟超过 500ms，影响实例: {{ $labels.instance }}。"
+          ip: "{{ $labels.pod_host_ip }}"
+
+      # Etcd 存储使用率监控
+      - alert: EtcdStorageHighUsage
+        expr: etcd_mvcc_db_total_size_in_bytes / etcd_server_quota_backend_bytes > 0.8
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "K8S_SERVICE"
+          id: "STORAGE_0104"
+        annotations:
+          summary: "Etcd 存储使用率过高"
+          description: "Etcd 存储使用率超过 80%，当前值: {{ $value }}，影响实例: {{ $labels.instance }}。请检查存储配置或清理无用数据。"
+          ip: "{{ $labels.pod_host_ip }}"
+
+    # ==================== API 服务器监控 ====================
+
+    - name: api-server-alerts
+      rules:
+      # API 响应时间监控
+      - alert: HighAPIResponseTime
+        expr: sum(rate(apiserver_request_duration_seconds_sum{verb!="LIST",verb!="WATCH",verb!="CONNECT"}[1m])) by (instance,verb) / sum(rate(apiserver_request_duration_seconds_count{verb!="LIST",verb!="WATCH",verb!="CONNECT"}[1m])) by (instance,verb) > 0.5
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "K8S_SERVICE"
+          id: "K8S_0108"
+        annotations:
+          summary: "API 响应时间过高"
+          description: "服务 {{ $labels.job }} 的 API 响应时间在过去 1 分钟内超过了 500 毫秒，当前值: {{ $value }}，影响实例: {{ $labels.instance }}。请检查 API 的负载情况或优化请求处理逻辑。"
+          ip: "{{ $labels.instance }}"
+
+    # ==================== 节点详细监控 ====================
+
+    - name: node-alerts
+      rules:
+      # 节点就绪状态监控
+      - alert: NodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "K8S_SERVICE"
+          id: "K8S_0104"
+        annotations:
+          summary: "Node {{ $labels.node }} is not ready"
+          description: "Node {{ $labels.node }} has been not ready for more than 30 seconds."
+          ip: "{{ $labels.instance }}"
+
+      # RDMA link down
+      - alert: RdmaPhysicalLinkDown
+        expr: node_infiniband_physical_state_id != 5
+        for: 1m
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "HARD_0111"
+        annotations:
+          summary: "RDMA 物理链路 DOWN"
+          description: "节点 {{ $labels.instance }} 设备 {{ $labels.device }} 端口 {{ $labels.port }} 物理状态码 {{ $value }}"
+
+      # 节点 CPU 负载监控 - 警告级别
+      - alert: NodeHighCPUUsage
+        expr: (node_load5 / on(instance) count without(cpu, mode)(node_cpu_seconds_total{mode="idle"})) > 2.5
+        for: 10m
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "HARD_0103"
+        annotations:
+          summary: "节点负载严重 (实例: {{ $labels.instance }})"
+          description: "5分钟平均负载是CPU核心数的 {{ $value | humanizePercentage }} 倍！系统可能已严重过载。"
+          ip: "{{ $labels.instance }}"
+
+      # 节点内存使用率监控 - 严重级别
+      - alert: NodeCriticalMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
+        for: 30s
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "HARD_0104"
+        annotations:
+          summary: "节点内存使用率严重过高"
+          description: "节点 {{ $labels.instance }} 内存使用率达到 {{ $value }}%"
+          ip: "{{ $labels.instance }}"
+
+      # 节点内存使用率监控 - 警告级别
+      - alert: NodeHighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "HARD_0105"
+        annotations:
+          summary: "节点内存使用率过高"
+          description: "节点 {{ $labels.instance }} 内存使用率达到 {{ $value }}%"
+          ip: "{{ $labels.instance }}"
+
+      # 节点磁盘使用率监控 - 严重级别
+      - alert: NodeCriticalDiskUsage
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 95
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "HARD_0117"
+        annotations:
+          summary: "节点磁盘使用率严重过高"
+          description: "节点 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} 使用率达到 {{ $value }}%"
+          ip: "{{ $labels.instance }}"
+
+      # 节点磁盘使用率监控 - 警告级别
+      - alert: NodeHighDiskUsage
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "STORAGE"
+          id: "HARD_0118"
+        annotations:
+          summary: "节点磁盘使用率过高"
+          description: "节点 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} 使用率达到 {{ $value }}%"
+          ip: "{{ $labels.instance }}"
+
+      # 节点内存压力监控
+      - alert: NodeMemoryPressure
+        expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "BASIC_ENV"
+          id: "HARD_0106"
+        annotations:
+          summary: "Node {{ $labels.node }} is under memory pressure"
+          description: "Node {{ $labels.node }} is under memory pressure for more than 2 minutes."
+          ip: "{{ $labels.instance }}"
+
+      # 节点磁盘压力监控
+      - alert: NodeDiskPressure
+        expr: kube_node_status_condition{condition="DiskPressure",status="true"} == 1
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "STORAGE"
+          id: "HARD_0119"
+        annotations:
+          summary: "Node {{ $labels.node }} is under disk pressure"
+          description: "Node {{ $labels.node }} is under disk pressure for more than 2 minutes."
+          ip: "{{ $labels.instance }}"
+
+      # 节点 PID 压力监控
+      - alert: NodePIDPressure
+        expr: kube_node_status_condition{condition="PIDPressure",status="true"} == 1
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "K8S_SERVICE"
+          id: "K8S_0130"
+        annotations:
+          summary: "Node {{ $labels.node }} is under PID pressure"
+          description: "Node {{ $labels.node }} is under PID pressure for more than 2 minutes."
+          ip: "{{ $labels.instance }}"
+
+      # 节点网络不可用监控
+      - alert: NodeNetworkUnavailable
+        expr: kube_node_status_condition{condition="NetworkUnavailable",status="true"} == 1
+        for: 2m
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "HARD_0101"
+        annotations:
+          summary: "Node {{ $labels.node }} network is unavailable"
+          description: "Node {{ $labels.node }} network is unavailable for more than 2 minutes."
+          ip: "{{ $labels.instance }}"
+
+      # 节点 CPU 温度监控 - 严重级别
+      - alert: NodeCriticalCPUTemperature
+        expr: node_hwmon_temp_celsius > 85
+        for: 30s
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "NODE_0018"
+        annotations:
+          summary: "节点 CPU 温度严重过高"
+          description: "节点 {{ $labels.instance }} CPU 温度达到 {{ $value }}°C"
+          ip: "{{ $labels.instance }}"
+
+      # 节点 CPU 温度监控 - 警告级别
+      - alert: NodeHighCPUTemperature
+        expr: node_hwmon_temp_celsius > 75
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "NODE_0019"
+        annotations:
+          summary: "节点 CPU 温度过高"
+          description: "节点 {{ $labels.instance }} CPU 温度达到 {{ $value }}°C"
+          ip: "{{ $labels.instance }}"
+
+    # ==================== Kubernetes 工作负载监控 ====================
+
+    - name: kubernetes-workload-alerts
+      rules:
+      # Deployment 副本数不匹配监控
+      - alert: DeploymentReplicasMismatch
+        expr: kube_deployment_spec_replicas != kube_deployment_status_replicas_ready
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "K8S_SERVICE"
+          id: "K8S_0005"
+        annotations:
+          summary: "Deployment {{ $labels.deployment }} 副本数不匹配"
+          description: "Deployment {{ $labels.deployment }} 在命名空间 {{ $labels.namespace }} 中期望副本数与就绪副本数不匹配"
+          ip: "{{ $labels.instance }}"
+
+      # DaemonSet 调度异常监控
+      - alert: DaemonSetNotScheduled
+        expr: kube_daemonset_status_current_number_scheduled != kube_daemonset_status_desired_number_scheduled
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "K8S_SERVICE"
+          id: "K8S_0006"
+        annotations:
+          summary: "DaemonSet {{ $labels.daemonset }} 调度异常"
+          description: "DaemonSet {{ $labels.daemonset }} 在命名空间 {{ $labels.namespace }} 中当前调度数量与期望数量不匹配"
+          ip: "{{ $labels.instance }}"
+
+      # PVC Pending 监控
+      - alert: PersistentVolumeClaimPending
+        expr: kube_persistentvolumeclaim_status_phase{phase="Pending"} > 0
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "K8S_SERVICE"
+          id: "K8S_0008"
+        annotations:
+          summary: "PVC {{ $labels.persistentvolumeclaim }} 处于 Pending 状态"
+          description: "PVC {{ $labels.persistentvolumeclaim }} 在命名空间 {{ $labels.namespace }} 中处于 Pending 状态"
+          ip: "{{ $labels.instance }}"
+
+      # PV 失败监控
+      - alert: PersistentVolumeFailed
+        expr: kube_persistentvolume_status_phase{phase="Failed"} > 0
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "K8S_SERVICE"
+          id: "K8S_0009"
+        annotations:
+          summary: "PV {{ $labels.persistentvolume }} 失败"
+          description: "PV {{ $labels.persistentvolume }} 处于失败状态"
+          ip: "{{ $labels.instance }}"
+
+    # ==================== NVIDIA GPU 监控 ====================
+
+    - name: nvidia-gpu-alerts
+      rules:
+      # GPU 设备指标阈值监控
+      - alert: DCGM_Device_Metric_Threshold
+        expr: count by (instance) (DCGM_FI_DEV_MEMORY_TEMP) < 8
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "GPU_0102"
+        annotations:
+          summary: "DCGM metrics < 8 on instance {{ $labels.instance }}"
+          description: "GPU 异常：监控指标数量少于8个"
+          ip: "{{ $labels.instance }}"
+
+      # GPU XID 错误监控
+      # - alert: DCGM_XID_Errors
+      #  expr: DCGM_FI_DEV_XID_ERRORS > 0 and DCGM_FI_DEV_XID_ERRORS{xid!~".*31.*"} > 0 and DCGM_FI_DEV_XID_ERRORS{xid!~".*43.*"} > 0
+      #  for: 30s
+      #  labels:
+      #    severity: P1
+      #    alert_type: "HARD_WARE"
+      #    id: "GPU_0107"
+      #  annotations:
+      #    summary: "XID Errors detected on instance {{ $labels.instance }}"
+      #    description: "GPU {{ $labels.gpu }} (model {{ $labels.modelName }}) XID is {{ $value }}"
+      #    ip: "{{ $labels.instance }}"
+
+      # GPU ECC 双位错误监控
+      - alert: GPUECCDoubleBitError
+        expr: DCGM_FI_DEV_ECC_DBE_VOL_TOTAL > 0
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "GPU_0103"
+        annotations:
+          description: "GPU {{ $labels.gpu }} (model {{ $labels.modelName }}) has detected double bit ECC errors {{$value}}."
+          summary: "GPU has double bit ECC errors, indicating a potential severe hardware failure."
+          ip: "{{ $labels.instance }}"
+
+      # GPU ECC 单位错误监控
+      - alert: GPUECCSingleBitError
+        expr: DCGM_FI_DEV_ECC_SBE_VOL_TOTAL > 0
+        for: 2m
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "GPU_0104"
+        annotations:
+          description: "GPU {{ $labels.gpu }} (model {{ $labels.modelName }}) has detected single bit ECC errors {{$value}}."
+          summary: "GPU has single bit ECC errors, which may indicate a developing hardware failure."
+          ip: "{{ $labels.instance }}"
+
+      # GPU 功耗违规监控
+      - alert: GPUPowerViolation
+        expr: DCGM_FI_DEV_POWER_VIOLATION > 0
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "GPU_0105"
+        annotations:
+          description: "GPU {{ $labels.gpu }} (model {{ $labels.modelName }}) on node {{ $labels.Hostname }} has throttled due to power constraints."
+          summary: "GPU is throttling due to power violation (over power limit).(slowdown)"
+          ip: "{{ $labels.instance }}"
+
+      # GPU 温度违规监控
+      - alert: GPUTemperatureViolation
+        expr: DCGM_FI_DEV_THERMAL_VIOLATION > 0
+        for: 30s
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "GPU_0106"
+        annotations:
+          description: "GPU {{ $labels.gpu }} (model {{ $labels.modelName }}) on node {{ $labels.Hostname }} has throttled due to thermal constraints."
+          summary: "GPU is throttling due to thermal violation (over temperature limit)."
+          ip: "{{ $labels.instance }}"
+
+      # GPU 显存温度过高监控
+      - alert: HighMemoryTemperature
+        expr: DCGM_FI_DEV_MEMORY_TEMP > 80
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "GPU_0101"
+        annotations:
+          summary: "The memory temperature of device {{ $labels.device }} is too high ({{ $value }}°C)"
+          description: "The memory temperature of device {{ $labels.device }} has exceeded 80°C for more than 2 minutes."
+          ip: "{{ $labels.instance }}"
+
+      # GPU 核心温度过高监控
+      - alert: HighGPULoadTemperature
+        expr: DCGM_FI_DEV_GPU_TEMP > 80
+        for: 2m
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "GPU_0008"
+        annotations:
+          summary: "The GPU temperature of device {{ $labels.device }} is too high ({{ $value }}°C)"
+          description: "The GPU temperature of device {{ $labels.device }} has exceeded 80°C for more than 2 minutes."
+          ip: "{{ $labels.instance }}"
+
+      # 掉卡
+      - alert: GPUoffline
+        expr: dcgm_exporter_last_scrape_error == 0 and absent(DCGM_FI_DEV_GPU_UTIL)
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "GPU_0109"
+        annotations:
+          summary: "GPU {{ $labels.gpu }} 在节点 {{ $labels.instance }} 失联"
+          description: "GPU {{ $labels.gpu }} 在节点 {{ $labels.instance }} 失联，可能是掉卡"
+
+    - name: ipmi-hardware
+      rules:
+      # 风扇故障告警
+      - alert: IPMI_Fan_Speed_Low
+        expr: ipmi_fan_speed_rpm < 1000
+        for: 3m
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "BMC_0102"
+        annotations:
+          summary: "风扇转速过低 ({{ $labels.name }})"
+          description: "节点 {{ $labels.node }} 的风扇 {{ $labels.name }} 转速仅 {{ $value }} RPM，低于阈值 1000 RPM。"
+
+      # 电源状态告警
+      - alert: IPMI_Power_Supply_Failed
+        expr: ipmi_power_supply_state{state="0"} == 1
+        for: 1m
+        labels:
+          severity: P2
+          alert_type: "HARD_WARE"
+          id: "BMC_0103"
+        annotations:
+          summary: "电源故障 ({{ $labels.name }})"
+          description: "节点 {{ $labels.node }} 的电源 {{ $labels.name }} 失效！"
+
+      # 磁盘健康告警
+      - alert: IPMI_Disk_Health_Failed
+        expr: ipmi_drive_health_state{state!="0"} == 1
+        for: 2m
+        labels:
+          severity: P1
+          alert_type: "HARD_WARE"
+          id: "BMC_0106"
+        annotations:
+          summary: "磁盘健康异常 ({{ $labels.name }})"
+          description: "节点 {{ $labels.node }} 的磁盘 {{ $labels.name }} 报告故障状态 (状态码: {{ $labels.state }})。"
+
+    # ==================== GPFS 监控 ====================
+    - name: gpfs-alerts
+      rules:
+      # 磁盘状态
+      - alert: GpfsDiskFailed
+        expr: gpfs_disk_status == 2
+        for: 0s
+        labels:
+          severity: P1
+          alert_type: "STORAGE"
+          id: "STORAGE_0112"
+        annotations:
+          summary: "GPFS 磁盘 {{ $labels.disk }} 状态 FAILED"
+          description: "Disk {{ $labels.disk }} on node {{ $labels.instance }} 已标记为 FAILED，可能影响数据可靠性。"
+
+      # 磁盘容量报警
+      - alert: GpfsClusterDiskFull
+        expr: (sum(gpfs_fs_used_bytes) / sum(gpfs_fs_total_bytes)) >= 0.95
+        for: 2m
+        labels:
+          severity: P1
+          alert_type: "GPFS_CLUSTER"
+          id: "STORAGE_0103"
+        annotations:
+          summary: "GPFS 集群总磁盘使用率 ≥ 95 %"
+          description: "集群整体已使用 {{ $value | humanizePercentage }} 的存储空间，请立即扩容或清理数据。"
+
+      # P2：80 %–95 %
+      - alert: GpfsClusterDiskHigh
+        expr: (sum(gpfs_fs_used_bytes) / sum(gpfs_fs_total_bytes)) >= 0.80 and (sum(gpfs_fs_used_bytes) / sum(gpfs_fs_total_bytes)) < 0.95
+        for: 5m
+        labels:
+          severity: P2
+          alert_type: "STORAGE"
+          id: "STORAGE_0102"
+        annotations:
+          summary: "GPFS 集群总磁盘使用率 ≥ 80 %"
+          description: "集群整体已使用 {{ $value | humanizePercentage }} 的存储空间，请尽快规划扩容或清理。"
+
+      # 仲裁节点状态报警
+      - alert: GPFSQuorumNodeDown
+        expr: gpfs_quorum_node_status != 1
+        for: 1m
+        labels:
+          severity: P0
+          alert_type: "STORAGE"
+          id: "GPFS_0004"
+        annotations:
+          summary: "GPFS仲裁节点失效 ({{ $labels.node_name }})"
+          description: "关键的GPFS仲裁节点 {{ $labels.node_name }} 已失效！集群的脑裂防护能力和可用性正在降级。如果再有节点丢失，可能导致整个集群冻结。请立即检查该节点的网络和服务状态。"
+
+      # GPFS 健康状态
+      - alert: GPFSClusterNotHealthy
+        expr: gpfs_cluster_health != 0
+        for: 1m
+        labels:
+          severity: P0
+          alert_type: "STORAGE"
+          id: "GPFS_0001"
+        annotations:
+          summary: "GPFS集群状态异常"
+          description: "GPFS集群 {{ $labels.cluster_name }} 报告健康状态异常！当前状态码: {{ $value }} (0=正常, 非0=异常)。请立即使用 `mmhealth state` 和 `mmhealth node` 命令检查详情。"
+
+    # ==================== 交换机 SNMP 监控 ====================
+    - name: switch-alerts
+      rules:
+      # 10001 - In-PFC 数据包过多
+      - alert: SwitchTooManyInPfcPkts
+        expr: (increase(ruijie_DcbPfcPauseStat_pfc_recv_0{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_recv_1{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_recv_2{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_recv_3{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_recv_4{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_recv_5{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_recv_6{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_recv_7{job="ruijie-switch"}[10s])) > 1000
+        for: 10s
+        labels:
+          severity: P3
+          alert_type: "SWITCH"
+          id: "SWITCH_10001"
+        annotations:
+          summary: "交换机 In-PFC 数据包过多"
+          description: "交换机 {{ $labels.instance }} 10 秒内 In-PFC 数据包累计超过 1000，当前值为 {{ $value }}"
+          ip: "{{ $labels.instance }}"
+
+      # 10002 - Out-PFC 数据包过多
+      - alert: SwitchTooManyOutPfcPkts
+        expr: (increase(ruijie_DcbPfcPauseStat_pfc_send_0{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_send_1{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_send_2{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_send_3{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_send_4{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_send_5{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_send_6{job="ruijie-switch"}[10s]) + increase(ruijie_DcbPfcPauseStat_pfc_send_7{job="ruijie-switch"}[10s])) > 1000
+        for: 10s
+        labels:
+          severity: P3
+          alert_type: "SWITCH"
+          id: "SWITCH_10002"
+        annotations:
+          summary: "交换机 Out-PFC 数据包过多"
+          description: "交换机 {{ $labels.instance }} 10 秒内 Out-PFC 数据包累计超过 1000，当前值为 {{ $value }}"
+          ip: "{{ $labels.instance }}"
+
+      # 10003 - ECN 数据包过多
+      - alert: SwitchTooManyEcnPkts
+        expr: increase(ruijie_SsQosEcnWredStat_ecn_marked{job="ruijie-switch"}[30s]) > 10000
+        for: 30s
+        labels:
+          severity: P2
+          alert_type: "SWITCH"
+          id: "SWITCH_10003"
+        annotations:
+          summary: "交换机 ECN 数据包过多"
+          description: "交换机 {{ $labels.instance }} 30 秒内 ECN 数据包累计超过 10000，当前值为 {{ $value }}"
+          ip: "{{ $labels.instance }}"
+
+      # 10005 - CPU 使用率 > 70%
+      - alert: SwitchHighCpuLoad
+        expr: ruijie_SysmonData_cpu_percent{job="ruijie-switch"} > 70
+        for: 60s
+        labels:
+          severity: P2
+          alert_type: "SWITCH"
+          id: "SWITCH_10005"
+        annotations:
+          summary: "交换机 CPU 使用率过高"
+          description: "交换机 {{ $labels.instance }} CPU 使用率超过 70%，当前值为 {{ $value }}%"
+          ip: "{{ $labels.instance }}"
+
+      # 10010 - 设备实体温度超过 80℃
+      - alert: SwitchHighEntityTemperature
+        expr: ruijie_DevimTempInfo_Temperature{job="ruijie-switch"} > 80
+        for: 60s
+        labels:
+          severity: P1
+          alert_type: "SWITCH"
+          id: "SWITCH_10010"
+        annotations:
+          summary: "交换机实体温度过高"
+          description: "交换机 {{ $labels.instance }} 实体温度超过 80℃，当前为 {{ $value }}℃"
+          ip: "{{ $labels.instance }}"
+
+      # 10119 - 电源故障
+      - alert: SwitchPowerFail
+        expr: ruijie_DmEntityAttr_info{class="power",job="ruijie-switch"} != 1
+        for: 30s
+        labels:
+          severity: P1
+          alert_type: "SWITCH"
+          id: "SWITCH_10119"
+        annotations:
+          summary: "交换机电源故障"
+          description: "交换机 {{ $labels.instance }} 电源状态异常: {{ $value }}"
+          ip: "{{ $labels.instance }}"
+
+      # 10120 - 风扇故障
+      - alert: SwitchFanFail
+        expr: ruijie_DmEntityAttr_info{class="fan",job="ruijie-switch"} != 1
+        for: 30s
+        labels:
+          severity: P2
+          alert_type: "SWITCH"
+          id: "SWITCH_10120"
+        annotations:
+          summary: "交换机风扇故障"
+          description: "交换机 {{ $labels.instance }} 风扇状态异常: {{ $value }}"
+          ip: "{{ $labels.instance }}"
+
+      # 10121 - 端口离线
+      - alert: SwitchInterfacePhyDown
+        expr: ruijie_DmEntityAttr_info{class="port",job="ruijie-switch"} == 2
+        for: 30s
+        labels:
+          severity: P2
+          alert_type: "SWITCH"
+          id: "SWITCH_10121"
+        annotations:
+          summary: "端口离线"
+          description: "交换机 {{ $labels.instance }} 端口 Down: {{ $value }}"
+          ip: "{{ $labels.instance }}"
+
+    # ==================== P0 紧急告警规则 ====================
+    - name: p0-emergency-alerts
+      rules:
+      # 集群整体不可用 - 大于20节点notready
+      - alert: ClusterMajorityNodesDown
+        expr: (count(kube_node_status_condition{condition="Ready",status="true"} == 0) / count(kube_node_status_condition{condition="Ready"})) > 0.2
+        for: 30s
+        labels:
+          severity: P0
+          alert_type: "K8S_SERVICE"
+          id: "CLUSTER_P0_001"
+        annotations:
+          summary: "集群多个节点宕机"
+          description: "集群中超过20%的节点不可用，当前不可用节点比例: {{ $value | humanizePercentage }}"
+
+      # 网路中断 - 大于20%节点网络故障
+      - alert: ClusterNetworkMajorOutage
+        expr: (count(kube_node_status_condition{condition="NetworkUnavailable",status="true"} == 1) / count(kube_node_status_condition{condition="NetworkUnavailable"})) >= 0.10
+        for: 1m
+        labels:
+          severity: P0
+          alert_type: "K8S_SERVICE"
+          id: "CLUSTER_NETWORK_P0_001"
+        annotations:
+          summary: "集群 ≥10% 节点网络不可用"
+          description: "当前 {{ $value | humanizePercentage }} 的节点处于 NetworkUnavailable 状态，请立即检查网络组件（CNI / 路由 / SDN）。"
+
+      # 多个GPU节点同时故障
+      - alert: MultipleGPUNodesDown
+        expr: count(up{job="nvidia-gpu-exporter"} == 0) > 3
+        for: 30s
+        labels:
+          severity: P0
+          alert_type: "HARD_WARE"
+          id: "GPU_P0_001"
+        annotations:
+          summary: "多个GPU节点同时故障"
+          description: "超过3个GPU节点同时不可用，计算能力严重受损，当前故障节点数: {{ $value }}"
+      # 关键命名空间服务全部宕机
+      - alert: CriticalNamespaceServicesDown
+        expr: count(kube_pod_status_phase{namespace=~"kube-system|volcano-system|monitoring",phase="Running"}) == 0
+        for: 30s
+        labels:
+          severity: P0
+          alert_type: "K8S_SERVICE"
+          node: "critical-services"
+          id: "K8S_P0_002"
+        annotations:
+          summary: "关键系统服务全部宕机"
+          description: "关键命名空间(kube-system/volcano-system/monitoring)中没有运行的Pod"
+
+      # 端口大量down
+      - alert: MajorPortsDown
+        expr: count(up{job=~".*"} == 0) > 20
+        for: 30s
+        labels:
+          severity: P0
+          alert_type: "BASIC_ENV"
+          node: "network-ports"
+          id: "PORT_P0_001"
+        annotations:
+          summary: "大量端口服务不可用"
+          description: "超过20个端口服务同时不可用，业务服务严重受影响"
+
+      # 高温紧急告警
+      - alert: EmergencyTemperatureAlert
+        expr: node_hwmon_temp_celsius > 95 or mx_chip_hotspot_temp > 95
+        for: 15s
+        labels:
+          severity: P0
+          alert_type: "HARD_WARE"
+          node: "{{ $labels.instance }}"
+          id: "TEMP_P0_001"
+        annotations:
+          summary: "设备温度紧急过高"
+          description: "设备温度超过95°C，存在硬件损坏风险，当前温度: {{ $value }}°C"
+          ip: "{{ $labels.instance }}"	

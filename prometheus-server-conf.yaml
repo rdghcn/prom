@@ -1,0 +1,334 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-server-conf
+  namespace: volcano-monitoring
+  annotations:
+    meta.helm.sh/release-name: volcano
+    meta.helm.sh/release-namespace: volcano-system
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    name: prometheus-server-conf
+data:
+  prometheus.yml: |-
+    global:
+      scrape_interval: 15s
+      scrape_timeout: 15s
+      evaluation_interval: 15s  # 规则评估间隔
+      external_labels:
+        cluster: 'volcano-cluster'
+        
+    # 规则文件配置
+    rule_files:
+      - /etc/prometheus/alerts/alert.rules
+      
+    # 告警管理器配置
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - 'alertmanager.volcano-monitoring.svc.cluster.local:9093'
+          timeout: 10s
+          
+    # 抓取配置
+    scrape_configs:
+      # ==================== Volcano 调度器监控 ====================
+      - job_name: 'volcano-scheduler'
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        static_configs:
+          - targets: ['volcano-scheduler-service.volcano-system.svc.cluster.local:8080']
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'up|process_cpu_seconds_total|go_memstats_alloc_bytes|volcano_.*'
+            action: keep
+
+      # ==================== Pipeline 监控 (可选) ====================
+      # - job_name: 'pipeline'
+      #   metrics_path: '/metrics'
+      #   scrape_interval: 15s
+      #   scrape_timeout: 10s
+      #   static_configs:
+      #     - targets: ['ml-pipeline.kubeflow.svc.cluster.local:8888']
+
+      # ==================== CoreDNS 监控 ====================
+      - job_name: 'coredns'
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - kube-system
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: kube-dns
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: metrics
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: nodename
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'up|process_cpu_seconds_total|go_memstats_alloc_bytes|coredns_dns_requests_total|coredns_cache_requests_total|coredns_dns_responses_total'
+            action: keep
+
+      # ==================== Etcd 监控 ====================
+      - job_name: 'etcd'
+        scheme: https
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        static_configs:
+          - targets: 
+              - '10.42.1.201:2379'  # master1
+              - '10.42.1.202:2379'  # master2
+              - '10.42.1.203:2379'  # master3
+        tls_config:
+          ca_file: /etc/prometheus/etcd-ssl/ca.pem
+          cert_file: /etc/prometheus/etcd-ssl/cert.pem
+          key_file: /etc/prometheus/etcd-ssl/key.pem
+          insecure_skip_verify: false
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'etcd_server_has_leader|etcd_disk_backend_commit_duration_seconds_bucket|etcd_mvcc_db_total_size_in_bytes|etcd_server_quota_backend_bytes|up|process_cpu_seconds_total|etcd_network_peer_round_trip_time_seconds_bucket'
+            action: keep
+
+      # ==================== API Server 监控 ====================
+      - job_name: 'apiserver'
+        scheme: https
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - default
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: kubernetes
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: https
+        tls_config:
+          ca_file: /etc/prometheus/api-server-ssl/ca.crt
+          cert_file: /etc/prometheus/api-server-ssl/apiserver-kubelet-client.crt
+          key_file: /etc/prometheus/api-server-ssl/apiserver-kubelet-client.key
+          insecure_skip_verify: false
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'up|apiserver_request_total|apiserver_request_duration_seconds_sum|apiserver_request_duration_seconds_count|process_resident_memory_bytes|process_cpu_seconds_total|apiserver_current_inflight_requests'
+            action: keep
+
+      # ==================== 沐曦 GPU 监控 ====================
+      - job_name: 'metax-gpu-exporter'
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        static_configs:
+          - targets: ['metax-mx-exporter.metax-monitor.svc.cluster.local:8000']
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'mx_.*|up|process_cpu_seconds_total'
+            action: keep
+
+      # ==================== Node Exporter 监控 ====================
+      - job_name: 'node-exporter'
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: node-exporter
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: nodename
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: instance
+          - target_label: __address__
+            replacement: ${1}:9100
+            source_labels: [__meta_kubernetes_pod_host_ip]
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'node_cpu_seconds_total|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_load1|node_load5|node_load15|node_network_carrier|node_filesystem_readonly|node_filesystem_device_error|node_hwmon_temp_celsius|up|node_boot_time_seconds|node_context_switches_total|node_network_carrier_changes_total|^node_infiniband.*'
+            action: keep
+
+      # ==================== NVIDIA GPU 监控 ====================
+      - job_name: 'nvidia-gpu-exporter'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: nvidia-gpu-exporter
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: nodename
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: instance
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'DCGM_FI_DEV_.*|up|nvidia_ml_py_.*'
+            action: keep
+
+      # ==================== Kube State Metrics 监控 ====================
+      - job_name: 'kube-state-metrics'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: kube-state-metrics
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: nodename
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'kube_pod_status_phase|kube_pod_container_status_restarts_total|kube_pod_status_ready|kube_pod_status_unschedulable|kube_node_status_condition|kube_deployment_spec_replicas|kube_deployment_status_replicas_ready|kube_daemonset_status_.*|kube_job_status_.*|kube_persistentvolume.*|kube_namespace_status_phase|up'
+            action: keep
+
+      # ==================== Kubelet cAdvisor 监控 ====================
+      - job_name: 'kubernetes-nodes-cadvisor'
+        metrics_path: '/metrics'
+        scheme: 'https'
+        scrape_interval: 30s  # cAdvisor 数据量大，降低抓取频率
+        scrape_timeout: 15s
+        kubernetes_sd_configs:
+          - role: node
+        tls_config:
+          ca_file: /etc/prometheus/api-server-ssl/ca.crt
+          cert_file: /etc/prometheus/api-server-ssl/apiserver-kubelet-client.crt
+          key_file: /etc/prometheus/api-server-ssl/apiserver-kubelet-client.key
+          insecure_skip_verify: false
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.*)
+          - action: replace
+            regex: (.*)
+            source_labels: ["__address__"]
+            target_label: __address__
+            replacement: "kubernetes.default.svc.cluster.local:443"
+          - action: replace
+            source_labels: [__meta_kubernetes_node_name]
+            target_label: __metrics_path__
+            regex: (.*)
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: nodename
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'container_memory_working_set_bytes|container_cpu_usage_seconds_total|container_fs_usage_bytes|container_fs_limit_bytes|container_network_receive_bytes_total|container_network_transmit_bytes_total|up'
+            action: keep
+          # 过滤掉系统容器和pause容器
+          - source_labels: [container]
+            regex: '^$'
+            action: drop
+          - source_labels: [container]
+            regex: 'POD'
+            action: drop
+
+      # ==================== Ceph 监控 ====================
+      - job_name: 'cephfs'
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        static_configs:
+          - targets: ['10.233.9.92:9283']
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'ceph_cluster_total_bytes|ceph_cluster_total_used_bytes|ceph_health_status|up'
+            action: keep
+
+      - job_name: 'S3'
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        static_configs:
+          - targets: ['10.233.9.92:9283']
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'ceph_cluster_total_bytes|ceph_cluster_total_used_bytes|ceph_health_status|up'
+            action: keep
+
+      - job_name: 'rbd'
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        static_configs:
+          - targets: ['rook-ceph-mgr.rook-ceph.svc.cluster.local:9283']
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'ceph_cluster_total_bytes|ceph_cluster_total_used_bytes|ceph_health_status|up'
+            action: keep
+
+      # ==================== Harbor Exporter 监控 (如果有的话) ====================
+      - job_name: 'harbor-exporter'
+        scrape_interval: 30s
+        scrape_timeout: 15s
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: harbor-exporter
+            action: keep
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'harbor_.*|up'
+            action: keep
+
+      # ==================== Postgres Exporter 监控 (如果有的话) ====================
+      - job_name: 'postgres-exporter'
+        scrape_interval: 30s
+        scrape_timeout: 15s
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: postgres-exporter
+            action: keep
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'pg_.*|up'
+            action: keep
+
+      # ==================== Calico Felix 监控 (如果有的话) ====================
+      - job_name: 'calico-felix'
+        scrape_interval: 30s
+        scrape_timeout: 15s
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: calico-felix
+            action: keep
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'felix_.*|up'
+            action: keep
+    # ==================== ipmi 监控 (如果有的话) ================================
+
+      - job_name: 'ipmi-exporter-pods'
+        kubernetes_sd_configs:
+          - role: pod  # 自动发现所有 Pod
+        relabel_configs:
+          # 仅保留标签为 app=ipmi-exporter 的 Pod
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: 'ipmi-exporter'
+            action: keep
+          # 直接使用 Pod IP 和原始端口（不替换端口）
+          - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_container_port_number]
+            separator: ':'
+            target_label: __address__
+          # 添加节点名称标签（可选）
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: node
+          # 添加 Pod 名称标签（可选）
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
