@@ -1,21 +1,15 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# 设置namespace
-kubectl apply -f ./namespace.yaml
-# 安装volcano
-kubectl apply -f ./volcano-development.yaml
+# Create monitoring namespace
+kubectl apply -f namespace.yaml
 
-# 生成访问访问etcd的证书
-kubectl create secret generic api-cert-secret   --from-file=apiserver-kubelet-client.crt=/etc/kubernetes/pki/apiserver-kubelet-client.crt   --from-file=apiserver-kubelet-client.key=/etc/kubernetes/pki/apiserver-kubelet-client.key   --from-file=ca.crt=/etc/kubernetes/pki/ca.crt -n volcano-monitoring
-kubectl create secret generic etcd-cert-secret   --from-file=ca.pem=/etc/ssl/etcd/ssl/ca.pem   --from-file=key.pem=/etc/ssl/etcd/ssl/admin-master-service-key.pem   --from-file=cert.pem=/etc/ssl/etcd/ssl/admin-master-service.pem -n volcano-monitoring
+# Inject additional scrape configurations
+kubectl apply -f additional-scrapeconfigs.yaml -n monitoring
 
-# 配置prometheus的configmap
-kubectl apply -f ./prometheus-configmap.yaml
-# 安装prometheus
-kubectl apply -f ./volcano-monitoring-pvc.yaml
-# 安装alertmanager
-kubectl apply -f ./alertmanager.yaml
+# Deploy kube-prometheus-stack chart from local directory
+helm upgrade --install prom kube-prometheus-stack -n monitoring
 
-kubectl apply -f ../GPU
-
-kubectl apply -f ../kube-state-metrics
+# Apply extra ServiceMonitor and PrometheusRule resources
+kubectl apply -f servicemonitors/ -n monitoring
+kubectl apply -f promrules/ -n monitoring
