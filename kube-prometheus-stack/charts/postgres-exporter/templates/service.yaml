@@ -1,0 +1,16 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "postgres-exporter.fullname" . }}
+  labels:
+    app: postgres-exporter
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: postgres-exporter
+  ports:
+  - name: metrics
+    port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.port }}
+{{- end }}

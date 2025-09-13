@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: additional-scrape-configs
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+type: Opaque
+stringData:
+  additional-scrape-configs.yaml: |
+    - job_name: 'etcd'
+      scheme: https
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      static_configs:
+        - targets:
+            - '10.42.1.201:2379'
+            - '10.42.1.202:2379'
+            - '10.42.1.203:2379'
+      tls_config:
+        ca_file: /etc/prometheus/etcd-ssl/ca.pem
+        cert_file: /etc/prometheus/etcd-ssl/cert.pem
+        key_file: /etc/prometheus/etcd-ssl/key.pem
+        insecure_skip_verify: false
+    - job_name: 'cephfs'
+      metrics_path: '/metrics'
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      static_configs:
+        - targets: ['10.233.9.92:9283']
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'ceph_cluster_total_bytes|ceph_cluster_total_used_bytes|ceph_health_status|up'
+          action: keep
+    - job_name: 'S3'
+      metrics_path: '/metrics'
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      static_configs:
+        - targets: ['10.233.9.92:9283']
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'ceph_cluster_total_bytes|ceph_cluster_total_used_bytes|ceph_health_status|up'
+          action: keep
+    - job_name: 'rbd'
+      metrics_path: '/metrics'
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      static_configs:
+        - targets: ['rook-ceph-mgr.rook-ceph.svc.cluster.local:9283']
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'ceph_cluster_total_bytes|ceph_cluster_total_used_bytes|ceph_health_status|up'
+          action: keep
