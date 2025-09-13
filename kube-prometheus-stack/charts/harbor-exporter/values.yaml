@@ -1,0 +1,9 @@
+enabled: true
+image:
+  repository: goharbor/harbor-exporter
+  tag: v0.6.1
+  pullPolicy: IfNotPresent
+service:
+  port: 9100
+  type: ClusterIP
+resources: {}

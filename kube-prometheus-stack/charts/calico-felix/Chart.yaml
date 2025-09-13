@@ -1,0 +1,4 @@
+apiVersion: v2
+name: calico-felix
+version: 0.1.0
+description: Calico Felix metrics for Prometheus

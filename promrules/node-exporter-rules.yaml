@@ -1,0 +1,202 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: node-exporter-rules
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: node-alerts
+      rules:
+        # 节点就绪状态监控
+        - alert: NodeNotReady
+          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 30s
+          labels:
+            severity: P1
+            alert_type: "K8S_SERVICE"
+            id: "K8S_0104"
+          annotations:
+            summary: "Node {{ $labels.node }} is not ready"
+            description: "Node {{ $labels.node }} has been not ready for more than 30 seconds."
+            ip: "{{ $labels.instance }}"
+
+        # RDMA 端口链路异常
+        - alert: RdmaLinkDown
+          expr: node_infiniband_port_state_id != 4
+          for: 1m
+          labels:
+            severity: P1
+            alert_type: "HARD_WARE"
+            id: "HARD_0110"
+          annotations:
+            summary: "RDMA 端口链路异常"
+            description: "节点 {{ $labels.instance }} 设备 {{ $labels.device }} 端口 {{ $labels.port }} 当前状态码 {{ $value }}"
+
+        # RDMA 物理链路 DOWN
+        - alert: RdmaPhysicalLinkDown
+          expr: node_infiniband_port_physical_state_id != 5
+          for: 1m
+          labels:
+            severity: P1
+            alert_type: "HARD_WARE"
+            id: "HARD_0111"
+          annotations:
+            summary: "RDMA 物理链路 DOWN"
+            description: "节点 {{ $labels.instance }} 设备 {{ $labels.device }} 端口 {{ $labels.port }} 物理状态码 {{ $value }}"
+
+        # RDMA Active 端口数量异常
+        - alert: RdmaLinkUpCountNot8
+          expr: count(node_infiniband_port_state_id == 4) != 8
+          for: 30s
+          labels:
+            severity: P1
+            alert_type: "HARD_WARE"
+            id: "HARD_0110"
+          annotations:
+            summary: "RDMA Active 端口数量异常"
+            description: "节点 {{ $labels.instance }} RDMA Active 端口数量异常"
+
+        # 节点 CPU 负载监控 - 警告级别
+        - alert: NodeHighCPUUsage
+          expr: (node_load5 / on(instance) count without(cpu, mode)(node_cpu_seconds_total{mode="idle"})) > 2.5
+          for: 10m
+          labels:
+            severity: P2
+            alert_type: "HARD_WARE"
+            id: "HARD_0103"
+          annotations:
+            summary: "节点负载严重 (实例: {{ $labels.instance }})"
+            description: "5分钟平均负载是CPU核心数的 {{ $value | humanizePercentage }} 倍！系统可能已严重过载。"
+            ip: "{{ $labels.instance }}"
+
+        # 节点内存使用率监控 - 严重级别
+        - alert: NodeCriticalMemoryUsage
+          expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
+          for: 30s
+          labels:
+            severity: P2
+            alert_type: "HARD_WARE"
+            id: "HARD_0104"
+          annotations:
+            summary: "节点内存使用率严重过高"
+            description: "节点 {{ $labels.instance }} 内存使用率达到 {{ $value }}%"
+            ip: "{{ $labels.instance }}"
+
+        # 节点内存使用率监控 - 警告级别
+        - alert: NodeHighMemoryUsage
+          expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+          for: 2m
+          labels:
+            severity: P2
+            alert_type: "HARD_WARE"
+            id: "HARD_0105"
+          annotations:
+            summary: "节点内存使用率过高"
+            description: "节点 {{ $labels.instance }} 内存使用率达到 {{ $value }}%"
+            ip: "{{ $labels.instance }}"
+
+        # 节点磁盘使用率监控 - 严重级别
+        - alert: NodeCriticalDiskUsage
+          expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 95
+          for: 30s
+          labels:
+            severity: P1
+            alert_type: "HARD_WARE"
+            id: "HARD_0117"
+          annotations:
+            summary: "节点磁盘使用率严重过高"
+            description: "节点 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} 使用率达到 {{ $value }}%"
+            ip: "{{ $labels.instance }}"
+
+        # 节点磁盘使用率监控 - 警告级别
+        - alert: NodeHighDiskUsage
+          expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
+          for: 2m
+          labels:
+            severity: P2
+            alert_type: "STORAGE"
+            id: "HARD_0118"
+          annotations:
+            summary: "节点磁盘使用率过高"
+            description: "节点 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} 使用率达到 {{ $value }}%"
+            ip: "{{ $labels.instance }}"
+
+        # 节点内存压力监控
+        - alert: NodeMemoryPressure
+          expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+          for: 2m
+          labels:
+            severity: P2
+            alert_type: "BASIC_ENV"
+            id: "HARD_0106"
+          annotations:
+            summary: "Node {{ $labels.node }} is under memory pressure"
+            description: "Node {{ $labels.node }} is under memory pressure for more than 2 minutes."
+            ip: "{{ $labels.instance }}"
+
+        # 节点磁盘压力监控
+        - alert: NodeDiskPressure
+          expr: kube_node_status_condition{condition="DiskPressure",status="true"} == 1
+          for: 2m
+          labels:
+            severity: P2
+            alert_type: "STORAGE"
+            id: "HARD_0119"
+          annotations:
+            summary: "Node {{ $labels.node }} is under disk pressure"
+            description: "Node {{ $labels.node }} is under disk pressure for more than 2 minutes."
+            ip: "{{ $labels.instance }}"
+
+        # 节点 PID 压力监控
+        - alert: NodePIDPressure
+          expr: kube_node_status_condition{condition="PIDPressure",status="true"} == 1
+          for: 2m
+          labels:
+            severity: P2
+            alert_type: "K8S_SERVICE"
+            id: "K8S_0130"
+          annotations:
+            summary: "Node {{ $labels.node }} is under PID pressure"
+            description: "Node {{ $labels.node }} is under PID pressure for more than 2 minutes."
+            ip: "{{ $labels.instance }}"
+
+        # 节点网络不可用监控
+        - alert: NodeNetworkUnavailable
+          expr: kube_node_status_condition{condition="NetworkUnavailable",status="true"} == 1
+          for: 2m
+          labels:
+            severity: P1
+            alert_type: "HARD_WARE"
+            id: "HARD_0101"
+          annotations:
+            summary: "Node {{ $labels.node }} network is unavailable"
+            description: "Node {{ $labels.node }} network is unavailable for more than 2 minutes."
+            ip: "{{ $labels.instance }}"
+
+        # 节点 CPU 温度监控 - 严重级别
+        - alert: NodeCriticalCPUTemperature
+          expr: node_hwmon_temp_celsius > 85
+          for: 30s
+          labels:
+            severity: P2
+            alert_type: "HARD_WARE"
+            id: "NODE_0018"
+          annotations:
+            summary: "节点 CPU 温度严重过高"
+            description: "节点 {{ $labels.instance }} CPU 温度达到 {{ $value }}°C"
+            ip: "{{ $labels.instance }}"
+
+        # 节点 CPU 温度监控 - 警告级别
+        - alert: NodeHighCPUTemperature
+          expr: node_hwmon_temp_celsius > 75
+          for: 2m
+          labels:
+            severity: P2
+            alert_type: "HARD_WARE"
+            id: "NODE_0019"
+          annotations:
+            summary: "节点 CPU 温度过高"
+            description: "节点 {{ $labels.instance }} CPU 温度达到 {{ $value }}°C"
+            ip: "{{ $labels.instance }}"

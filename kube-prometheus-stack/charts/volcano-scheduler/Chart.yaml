@@ -1,0 +1,4 @@
+apiVersion: v2
+name: volcano-scheduler
+version: 0.1.0
+description: Volcano scheduler metrics for Prometheus

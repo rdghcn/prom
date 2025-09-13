@@ -1,0 +1,4 @@
+apiVersion: v2
+name: postgres-exporter
+version: 0.1.0
+description: Postgres exporter for Prometheus
