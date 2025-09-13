@@ -1,0 +1,4 @@
+apiVersion: v2
+name: harbor-exporter
+version: 0.1.0
+description: Harbor exporter for Prometheus

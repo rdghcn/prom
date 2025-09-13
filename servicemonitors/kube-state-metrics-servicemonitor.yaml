@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kube-state-metrics
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-state-metrics
+  endpoints:
+    - port: http-metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: nodename
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: 'kube_pod_status_phase|kube_pod_container_status_restarts_total|kube_pod_status_ready|kube_pod_status_unschedulable|kube_node_status_condition|kube_deployment_spec_replicas|kube_deployment_status_replicas_ready|kube_daemonset_status_.*|kube_job_status_.*|kube_persistentvolume.*|kube_namespace_status_phase|up'
+          action: keep

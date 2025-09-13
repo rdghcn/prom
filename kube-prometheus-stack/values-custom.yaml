@@ -1,0 +1,38 @@
+defaultRules:
+  enabled: false
+
+kubeStateMetrics:
+  enabled: false
+
+nodeExporter:
+  enabled: false
+
+kubeControllerManager:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+kubeEtcd:
+  enabled: false
+
+coreDns:
+  enabled: false
+
+kubeProxy:
+  enabled: false
+
+kubeApiServer:
+  enabled: false
+
+alertmanager:
+  enabled: false
+
+prometheusOperator:
+  enabled: true
+
+prometheus:
+  prometheusSpec:
+    additionalScrapeConfigs:
+      name: additional-scrape-configs
+      key: additional-scrape-configs.yaml

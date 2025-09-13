@@ -1,0 +1,20 @@
+{{- if .Values.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "nvidia-gpu-exporter.fullname" . }}
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-gpu-exporter
+  endpoints:
+  - port: metrics
+    interval: 15s
+    scrapeTimeout: 10s
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: '(DCGM_FI_DEV_GPU_TEMP|DCGM_FI_DEV_POWER_USAGE|up)'
+      action: keep
+{{- end }}

@@ -1,0 +1,24 @@
+{{- if .Values.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "volcano-scheduler.fullname" . }}
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.namespace }}
+  selector:
+    matchLabels:
+      app: volcano-scheduler
+  endpoints:
+  - port: metrics
+    interval: 15s
+    scrapeTimeout: 10s
+    path: /metrics
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'up|process_cpu_seconds_total|go_memstats_alloc_bytes|volcano_.*'
+      action: keep
+{{- end }}

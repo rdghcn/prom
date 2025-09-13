@@ -1,0 +1,10 @@
+enabled: true
+namespace: volcano-system
+image:
+  repository: volcanosh/vk-scheduler
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  port: 10251
+  type: ClusterIP
+resources: {}

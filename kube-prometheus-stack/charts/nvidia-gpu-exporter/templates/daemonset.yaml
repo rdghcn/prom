@@ -1,0 +1,25 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "nvidia-gpu-exporter.fullname" . }}
+  labels:
+    app: nvidia-gpu-exporter
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-gpu-exporter
+  template:
+    metadata:
+      labels:
+        app: nvidia-gpu-exporter
+    spec:
+      containers:
+      - name: nvidia-gpu-exporter
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.service.port }}
+          name: metrics
+        resources: {{- toYaml .Values.resources | nindent 10 }}
+{{- end }}
